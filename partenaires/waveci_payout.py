@@ -293,11 +293,8 @@ class WaveciPayoutProcessor:
             # Analyse temporelle avancée
             st.subheader("Analyse Temporelle")
             dfpmt['Date'] = pd.to_datetime(dfpmt['Date'])
-            #dfpmt['Jour'] = dfpmt['Date'].dt.day_name(locale='fr')
-            dfpmt['Jour'] = dfpmt['Date'].dt.day_name().map({
-                'Monday': 'Lundi', 'Tuesday': 'Mardi', 'Wednesday': 'Mercredi',
-                'Thursday': 'Jeudi', 'Friday': 'Vendredi', 'Saturday': 'Samedi', 'Sunday': 'Dimanche'
-            })
+            dfpmt['Jour'] = dfpmt['Date'].dt.day_name(locale='fr')
+            
             dfpmt['Heure'] = pd.to_datetime(dfpmt['Created Date']).dt.hour
             
             col1, col2 = st.columns(2)

@@ -13,12 +13,14 @@ def save_and_offer_report(
     metrics: Dict[str, Any],
     sheets: Dict[str, Optional[pd.DataFrame]],
     key_suffix: str = "default",
+    reco_start=None,
+    reco_end=None,
 ):
     """
-    Enregistre les résultats dans st.session_state et affiche
-    un bouton de téléchargement du rapport Excel.
+    Enregistre les résultats et affiche le bouton de téléchargement.
+    Les bytes Excel sont mis en cache dans st.session_state pour que
+    le clic « Télécharger » ne régénère pas le fichier ni ne bloque l'UI.
     """
-    # Nettoyer les dataframes vides / None
     clean_sheets = {
         name: df for name, df in sheets.items()
         if df is not None and isinstance(df, pd.DataFrame) and not df.empty
@@ -28,6 +30,8 @@ def save_and_offer_report(
         "partner_name": partner_name,
         "metrics": metrics,
         "sheets": clean_sheets,
+        "reco_start": reco_start,
+        "reco_end": reco_end,
     }
 
     st.markdown("---")
@@ -37,4 +41,6 @@ def save_and_offer_report(
         metrics=metrics,
         sheets=clean_sheets,
         key=f"report_btn_{key_suffix}",
+        reco_start=reco_start,
+        reco_end=reco_end,
     )

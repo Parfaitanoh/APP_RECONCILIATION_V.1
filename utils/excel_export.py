@@ -3,6 +3,7 @@ Générateur de rapport Excel multi-onglets pour la réconciliation.
 """
 import pandas as pd
 import io
+import re
 from datetime import datetime
 from typing import Dict, Optional, Any
 
@@ -12,32 +13,58 @@ class ExcelExporter:
 
     @staticmethod
     def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
-        """Remet l'index en colonnes (DateCourte, DATEOP, Statut, etc.)."""
         if not isinstance(df, pd.DataFrame):
             return pd.DataFrame(df)
-        # Toujours reset_index si l'index n'est pas un RangeIndex purement numérique sans nom
         if not isinstance(df.index, pd.RangeIndex) or df.index.name is not None:
             export_df = df.reset_index()
         else:
             export_df = df.copy()
-        # Supprimer colonnes d'index techniques inutiles
-        if "index" in export_df.columns and export_df.columns.tolist().count("index") == 1:
-            # garder si c'était un vrai index nommé "index"
-            pass
         return export_df
 
     @staticmethod
-    def create_report(
-        partner_name: str,
-        metrics: Dict[str, Any],
-        sheets: Dict[str, pd.DataFrame],
-    ) -> bytes:
-        output = io.BytesIO()
+    def _fmt_date(value) -> str:
+        if value is None or value == "":
+            return ""
+        try:
+            return pd.to_datetime(value).strftime("%Y%m%d")
+        except Exception:
+            s = str(value).replace("-", "").replace("/", "")[:8]
+            return s if s.isdigit() else ""
 
+    @staticmethod
+    def _safe_partner(name: str) -> str:
+        s = (name or "PARTENAIRE").strip().upper()
+        s = re.sub(r"\s+", "_", s)
+        s = re.sub(r"[^A-Z0-9_]", "", s)
+        return s or "PARTENAIRE"
+
+    @staticmethod
+    def build_filename(partner_name: str, reco_start=None, reco_end=None) -> str:
+        """
+        Format : {date_du_jour}_{partenaire}_{date_debut}_{date_fin}.xlsx
+        Exemple : 20260730_WAVE_CI_PAYIN_20260729_20260730.xlsx
+        """
+        today = datetime.now().strftime("%Y%m%d")
+        partner = ExcelExporter._safe_partner(partner_name)
+        d_start = ExcelExporter._fmt_date(reco_start)
+        d_end = ExcelExporter._fmt_date(reco_end)
+
+        parts = [today, partner]
+        if d_start:
+            parts.append(d_start)
+        if d_end and d_end != d_start:
+            parts.append(d_end)
+
+        return "_".join(parts) + ".xlsx"
+
+    @staticmethod
+    def create_report(partner_name: str, metrics: Dict[str, Any], sheets: Dict[str, pd.DataFrame]) -> bytes:
+        output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             summary_rows = [
                 ["Rapport de Réconciliation", partner_name],
                 ["Date de génération", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                ["Version app", "V2.1"],
                 ["", ""],
             ]
             for k, v in metrics.items():
@@ -52,13 +79,11 @@ class ExcelExporter:
                     continue
                 safe_name = str(sheet_name)[:31]
                 try:
-                    export_df = ExcelExporter._prepare_df(df)
-                    export_df.to_excel(writer, sheet_name=safe_name, index=False)
+                    ExcelExporter._prepare_df(df).to_excel(writer, sheet_name=safe_name, index=False)
                 except Exception as e:
                     pd.DataFrame({"Erreur": [str(e)]}).to_excel(
                         writer, sheet_name=safe_name, index=False
                     )
-
         output.seek(0)
         return output.getvalue()
 
@@ -67,16 +92,43 @@ class ExcelExporter:
         partner_name: str,
         metrics: Dict[str, Any],
         sheets: Dict[str, pd.DataFrame],
-        label: str = "📥 Télécharger le rapport final Excel",
+        label: str = None,
         key: str = "download_report",
+        reco_start=None,
+        reco_end=None,
     ):
         import streamlit as st
 
         try:
-            data = ExcelExporter.create_report(partner_name, metrics, sheets)
-            filename = f"Rapport_Reco_{partner_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+            filename = ExcelExporter.build_filename(
+                partner_name, reco_start=reco_start, reco_end=reco_end
+            )
+
+            # Cache des bytes Excel : évite de régénérer à chaque clic / rerun
+            cache_key = (
+                partner_name,
+                str(reco_start),
+                str(reco_end),
+                tuple(sorted(sheets.keys())),
+                tuple((k, str(v)) for k, v in sorted(metrics.items())),
+            )
+            prev_key = st.session_state.get("excel_report_cache_key")
+            if (
+                prev_key == cache_key
+                and st.session_state.get("excel_report_bytes")
+                and st.session_state.get("excel_report_name") == filename
+            ):
+                data = st.session_state["excel_report_bytes"]
+            else:
+                data = ExcelExporter.create_report(partner_name, metrics, sheets)
+                st.session_state["excel_report_bytes"] = data
+                st.session_state["excel_report_name"] = filename
+                st.session_state["excel_report_cache_key"] = cache_key
+
+            st.info(f"**V2.1** — Fichier : `{filename}`")
+            btn_label = label or f"📥 Télécharger {filename}"
             st.download_button(
-                label=label,
+                label=btn_label,
                 data=data,
                 file_name=filename,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

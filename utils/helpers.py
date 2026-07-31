@@ -1,36 +1,28 @@
-def metric_card(title, value, color, icon=None):
+def metric_card(title, value, color="#3070F0", icon=None):
     if icon:
         title = f"{icon} {title}"
     return f"""
-    <div style="
-        border-radius: 10px;
-        padding: 15px;
-        background-color: white;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        border-left: 5px solid {color};
-        height: 120px;
-        min-width: 200px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        overflow: hidden;
+    <div class="pmt-metric-card" style="
+        border-radius:14px;
+        padding:16px 18px;
+        background:#FFFFFF !important;
+        box-shadow:0 4px 16px rgba(48,112,240,0.12);
+        border:1px solid rgba(48,112,240,0.18);
+        border-left:5px solid {color};
+        height:120px;
+        min-width:200px;
+        display:flex;
+        flex-direction:column;
+        justify-content:center;
+        overflow:hidden;
+        color:#000000 !important;
     ">
-        <h3 style="
-            color: #555;
-            font-size: 16px;
-            margin: 0 0 8px 0;
-            font-weight: normal;
-            white-space: nowrap;
-        ">{title}</h3>
-        <p style="
-            color: #222;
-            font-size: 15px;
-            font-weight: bold;
-            margin: 0;
-            font-family: 'Courier New', monospace;
-            word-break: break-all;
-            line-height: 1.2;
-        ">{value}</p>
+        <div style="color:#000000 !important;-webkit-text-fill-color:#000000 !important;font-size:13px;font-weight:600;margin:0 0 8px 0;white-space:nowrap;">
+            {title}
+        </div>
+        <div style="color:#000000 !important;-webkit-text-fill-color:#000000 !important;font-size:20px;font-weight:800;margin:0;font-family:Inter,monospace;line-height:1.25;word-break:break-all;">
+            {value}
+        </div>
     </div>
     """
 
@@ -47,7 +39,6 @@ def safe_show(df, max_rows=3000, label=None):
         st.write(df)
         return
 
-    # Remettre l'index en colonnes (DATEOP, DateCourte, Statut…)
     display_df = df.copy()
     if not isinstance(display_df.index, pd.RangeIndex) or display_df.index.name is not None:
         display_df = display_df.reset_index()
@@ -69,5 +60,37 @@ def safe_show(df, max_rows=3000, label=None):
         )
         st.dataframe(display_df.head(max_rows), use_container_width=True)
     else:
-        # Pas de hauteur fixe → pas de barre de défilement / pagination artificielle
         st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+
+def filter_succes_abs_by_reco_date(df, reco_start=None, reco_end=None, date_col="Date"):
+    """Filtre SUCCESS absents partenaire sur [reco_start, reco_end] inclus."""
+    import pandas as pd
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return df, 0
+    if reco_start is None and reco_end is None:
+        return df, len(df)
+    before = len(df)
+    if date_col not in df.columns:
+        return df, before
+
+    series = pd.to_datetime(df[date_col], errors="coerce")
+    mask = pd.Series(True, index=df.index)
+
+    if reco_start is not None:
+        try:
+            start = pd.to_datetime(reco_start).normalize()
+        except Exception:
+            start = pd.to_datetime(str(reco_start)[:10], errors="coerce")
+        if pd.notna(start):
+            mask &= series.dt.normalize() >= start
+
+    if reco_end is not None:
+        try:
+            end = pd.to_datetime(reco_end).normalize()
+        except Exception:
+            end = pd.to_datetime(str(reco_end)[:10], errors="coerce")
+        if pd.notna(end):
+            mask &= series.dt.normalize() <= end
+
+    return df.loc[mask].copy(), before

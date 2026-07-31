@@ -13,15 +13,15 @@ from streamlit_extras.stylable_container import stylable_container
 import plotly.figure_factory as ff
 from utils.helpers import metric_card, safe_show, filter_succes_abs_by_reco_date
 
-class MoovciPayinProcessor:
+class OmbfPayoutProcessor:
     def __init__(self, data_file, partner_file, reco_start=None, reco_end=None):
         self.data_file = data_file
         self.partner_file = partner_file
         self.reco_start = reco_start
         self.reco_end = reco_end
-        self._partner_label = "MOOV CI PAYIN"
+        self._partner_label = "OM BF PAYOUT"
     
-    def load_file(self, file,**kwargs):
+    def load_file(self, file):
         # Votre fonction de chargement existante
         try:
             if file.name.endswith(".csv"):
@@ -29,9 +29,9 @@ class MoovciPayinProcessor:
                 dialect = csv.Sniffer().sniff(raw_data.split("\n")[0])
                 delimiter = dialect.delimiter
                 file.seek(0)
-                return pd.read_csv(file, delimiter=delimiter, encoding="utf-8",**kwargs)
+                return pd.read_csv(file, delimiter=delimiter, encoding="utf-8", low_memory=False)
             elif file.name.endswith((".xlsx", ".xls")):
-                return pd.read_excel(file,**kwargs)
+                return pd.read_excel(file)
             else:
                 st.error("Format non supporté.")
                 return None
@@ -42,7 +42,7 @@ class MoovciPayinProcessor:
     def process(self):
         # Charger les données
         pmt = self.load_file(self.data_file)
-        dfop = self.load_file(self.partner_file,skiprows=5)
+        dfop = self.load_file(self.partner_file)
         
         # Votre code de traitement existant pour Cinetpay
         def extractday(dated):
@@ -67,54 +67,63 @@ class MoovciPayinProcessor:
                 'statut': 'Statut'
             })
         
-          
-        
-        dfop['Opposite Party'] = dfop['Opposite Party'].astype(object)
-        #dfop['Details'] = dfop['Details'].fillna('Merchants Payment')
-        #payin=dfop[(dfop['Details']=='Merchants Payment')]
-        dfop['idop']=dfop['Receipt No.']
+        dfpmt['Phone Number'] = dfpmt['Phone Number'].astype(object)
+        ts= dfop.loc[(dfop['TRANSFER_STATUS'] == 'TS')]
+        # --- Nettoyage & transformation CHEZ LE PARTENAIRE-------------------------------
 
-        def extractmoov(x):
-            parts=x.split(' ')
-            return parts[0] 
-        dfop['Date']=dfop['Completion Time'].apply(extractmoov)
-
-        dfop['Details'] = dfop['Details'].fillna("operation")
+        ##def dat(x):
+            ##parts=x.split('/')
+            ##return parts[1]
+        ##dfop['month']=dfop['TRANSFER_DATE'].apply(dat)
         
-        #dfop['type_operation']=dfop['Details'].apply(payinn)
+        #def compa(cpm):
+            #parts=cpm.split(' ')
+            #return parts[0]
+        #dfop['cpm']=dfop['REMARKS'].apply(compa)
 
-        payin=dfop[dfop['Details']=='operation']
+        #def rev(trx):
+            #part=trx.split(' ')
+            #"return part[1]
+        #dfop['revsmt']=dfop['REMARKS'].apply(rev)
+
+        #mvtcompte=dfop[(dfop['REMARKS']!='OTP Cashout') & (dfop['TRANSFER_DATE']=='06')]
+        #mvtcompte.groupby(['REMARKS','TRANSFER_STATUS']).agg(
+        #Nombre=('DEBIT', 'count'),
+        #Volume=('DEBIT', 'sum'))
+
+         # Calcul des KPI------------------------------------
         
-        dfop1=dfop.copy()
+         # Calcul des KPI-----------------------------------------
+        
         #MISE EN PLACE DE RECHERCHE X POUR RECUPERATION CHEZ LE PARTENAIRE
         # Supprimer les doublons en conservant la première occurrence
-        dfop = dfop.drop_duplicates(subset='Receipt No.')
+        dfop_unique = dfop.drop_duplicates(subset='FTXN_ID')
         
         # Vérification des correspondances entre A1 et B1
-        correspondance_statut_op = dfop.set_index('Receipt No.')['Transaction Status']
-        correspondance_date_op = dfop.set_index('Receipt No.')['Date'].astype(object)
-        correspondance_idoperator = dfop.set_index('Receipt No.')['idop']
+        correspondance_statut_op = dfop_unique.set_index('FTXN_ID')['TRANSFER_STATUS']
+        correspondance_date_op = dfop_unique.set_index('FTXN_ID')['TRANSFER_DATE'].astype(object)
+        correspondance_idoperator = dfop_unique.set_index('FTXN_ID')['TRANSFER_ID']
         
         # Utilisation de map pour ajouter les colonnes correspondantes à dfpmt
-        dfpmt['DATEOP'] = dfpmt['ID Opérateur'].map(correspondance_date_op)
-        dfpmt['STATUTOP'] = dfpmt['ID Opérateur'].map(correspondance_statut_op)
-        dfpmt['IDOPERATOR'] = dfpmt['ID Opérateur'].map(correspondance_idoperator)
+        dfpmt['DATEOP'] = dfpmt['Transaction ID'].map(correspondance_date_op)
+        dfpmt['STATUTOP'] = dfpmt['Transaction ID'].map(correspondance_statut_op)
+        dfpmt['IDOPERATOR'] = dfpmt['Transaction ID'].map(correspondance_idoperator)
         
         
         
-        # Définir les taux de commission
-        dfpmt['Fraisop'] = dfpmt['Montant'] * 0.01
+        # Définir les taux de commission pour chaque opérateur
+        dfpmt['Fraisop'] = dfpmt['Montant'] * 0.0115
         dfpmt['FraisPmt'] = dfpmt['Fee amount'] - dfpmt['Fraisop']
         dfpmt['Tauxop']=dfpmt['Fraisop'] / dfpmt['Montant']
-        dfop['Taux(%)']=-(dfop['Withdrawn'] / dfop['Paid In'])
+        ombf= dfop.loc[(dfop['TRANSFER_STATUS'] == 'TS')]
         
         
         #NBSI PMT &CINETPAY
-        dfpmt['MOOVCI'] = dfpmt['ID Opérateur'].isin(payin['Receipt No.']).astype(int)
-        payin['PMT'] = payin['Receipt No.'].isin(dfpmt['ID Opérateur']).astype(int)
+        dfpmt['OMBF'] = dfpmt['Transaction ID'].isin(ombf['FTXN_ID']).astype(int)
+        ombf['PMT'] = ombf['FTXN_ID'].isin(dfpmt['Transaction ID']).astype(int)
 
         dfpmt['Nombre']= dfpmt['Montant']
-        payin['Nombre']= payin['Paid In']
+        ombf['Nombre']= ombf['TRANSFER_AMOUNT']
 
         # --- Création des onglets ---
 
@@ -170,15 +179,15 @@ class MoovciPayinProcessor:
 # ================================
 
         with tabs[1]:
-            st.subheader("Rapport Reconciliation MOOV CI PAYIN")
+            st.subheader("Rapport Reconciliation OMBF PAYOUT")
             
             # Création du tableau croisé dynamique
-            df_filteredpmt = dfpmt[dfpmt['MOOVCI'] == 1]
+            df_filteredpmt = dfpmt[dfpmt['OMBF'] == 1]
             
-            matched = df_filteredpmt['MOOVCI'].sum()
+            matched = df_filteredpmt['OMBF'].sum()
             unmatched = len(dfpmt) - matched
             reconciliation_rate = (matched / len(dfpmt)) * 100
-            maj=df_filteredpmt[(df_filteredpmt['Statut']=='FAILED') | (df_filteredpmt['Statut']=='PENDING')]
+            maj=df_filteredpmt[(df_filteredpmt['Statut']=='PENDING')]
             nbre_maj=maj['Transaction ID'].count()
             
             
@@ -190,22 +199,22 @@ class MoovciPayinProcessor:
         # Création du tableau croisé dynamique
             tcdpmt = pd.pivot_table(
             df_filteredpmt,
-            values=['Montant', 'Nombre','Fraisop', 'FraisPmt'],
+            values=['Montant', 'Nombre'],
             index=['DATEOP','Statut'],
-            aggfunc={'Nombre': 'count','Montant': 'sum' ,'Fraisop': 'sum', 'FraisPmt': 'sum' },
+            aggfunc={'Nombre': 'count','Montant': 'sum' },
             fill_value=0,
             margins=True,
             margins_name='Total'
         )
             # Création du tableau croisé dynamique
-            df_filtered = payin[(payin['PMT'] == 1) | (payin['PMT'] == 0)]
+            df_filtered = ombf[(ombf['PMT'] == 1) | (ombf['PMT'] == 0)]
 
         # Création du tableau croisé dynamique
-            tcdmoovci = pd.pivot_table(
+            tcdombf = pd.pivot_table(
             df_filtered,
-            values=['Nombre', 'Paid In'],
-            index=['Date','Transaction Status'],
-            aggfunc={'Nombre': 'count','Paid In': 'sum' },
+            values=['Nombre', 'TRANSFER_AMOUNT'],
+            index=['TRANSFER_DATE','TRANSFER_STATUS'],
+            aggfunc={'Nombre': 'count','TRANSFER_AMOUNT': 'sum' },
             fill_value=0,
             margins=True,
             margins_name='Total'
@@ -223,21 +232,20 @@ class MoovciPayinProcessor:
                 safe_show(tcdpmt)
                 
             with tab4:
-                st.write(tcdmoovci)
+                st.write(tcdombf)
             # LES TRANSACTIONS A METTRE A JOUR
             
-            maj_failed_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'FAILED') & (dfpmt['MOOVCI'] == 1)]
-            maj_pending_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'PENDING') & (dfpmt['MOOVCI'] == 1)]
-            trx_succes_abs = dfpmt.loc[(dfpmt['Statut'] == 'SUCCESS') & (dfpmt['MOOVCI'] == 0)]
+            maj_failed_a_succes = dfpmt.loc[(dfpmt['Statut'] != 'SUCCESS') & (dfpmt['OMBF'] == 1)]
+            maj_pending_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'PENDING') & (dfpmt['OMBF'] == 1)]
+            trx_succes_abs = dfpmt.loc[(dfpmt['Statut'] == 'SUCCESS') & (dfpmt['OMBF'] == 0)]
             trx_succes_abs, _n_before_date = filter_succes_abs_by_reco_date(
                 trx_succes_abs,
                 reco_start=getattr(self, 'reco_start', None),
                 reco_end=getattr(self, 'reco_end', None),
                 date_col='Date',
             )
-            trx_en_attente_abs= dfpmt.loc[(dfpmt['Statut']=='PENDING') & (dfpmt['MOOVCI'] == 0)]
-            trx_succes_cinetpay_abs_pmt = payin.loc[(payin['Transaction Status']=='Completed') & (payin['PMT'] == 0)]
-            
+            trx_en_attente_abs= dfpmt.loc[(dfpmt['Statut']=='PENDING') & (dfpmt['OMBF'] == 0)]
+            trx_succes_cinetpay_abs_pmt = ombf.loc[(ombf['TRANSFER_STATUS']=='TS') & (ombf['PMT'] == 0)]
             select_marchand=df_filteredpmt.groupby(['Pays','Merchant Name','Operator']).agg(
                 Nombre=('Montant', 'count'),
                 Volume_transaction=('Montant','sum')
@@ -247,9 +255,7 @@ class MoovciPayinProcessor:
                 Nombre=('Montant', 'count'),
                 Volume=('Montant', 'sum')
             )
-            #recouv=dfop[dfop['Service']!='Merchant Payment']
-            
-            st.subheader("🔴 Transactions failed à mettre à jour en SUCCESS")
+            st.subheader("🔴 Pertes")
             safe_show(maj_failed_a_succes)
             
             st.subheader("🟡 Transactions PENDING à mettre à jour en SUCCESS")
@@ -275,7 +281,7 @@ class MoovciPayinProcessor:
             safe_show(select_marchand)
 
             #st.subheader("🟤 MOUVEMENT SUR LE COMPTE")
-            #st.write(recouv)
+            #st.write(mvtcompte)
             
             st.subheader("📊🔵 TRANSACTION PAR OPERATEUR ET PAYS")
             safe_show(select_country_marchand_statut)

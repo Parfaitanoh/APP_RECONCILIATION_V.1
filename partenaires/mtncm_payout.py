@@ -11,12 +11,14 @@ import io
 import os
 from streamlit_extras.stylable_container import stylable_container
 import plotly.figure_factory as ff
-from utils.helpers import metric_card, safe_show
+from utils.helpers import metric_card, safe_show, filter_succes_abs_by_reco_date
 
 class MtncmPayoutProcessor:
-    def __init__(self, data_file, partner_file):
+    def __init__(self, data_file, partner_file, reco_start=None, reco_end=None):
         self.data_file = data_file
         self.partner_file = partner_file
+        self.reco_start = reco_start
+        self.reco_end = reco_end
         self._partner_label = "MTN CM PAYOUT"
     
     def load_file(self, file):
@@ -73,7 +75,7 @@ class MtncmPayoutProcessor:
             parts=dateds.split(' ')
             return parts[0]
         dfop['DateCourte']= dfop['Date'].apply(extractdays)
-        transfer= dfop.loc[(dfop['Type'] == 'Transfer') & (dfop['From name'] == 'PAYMETRUST Deposit')]
+        transfer= dfop.loc[(dfop['Type'] == 'Transfer') & (dfop['From name'] == 'PAYMETRUST')]
         
         dfmtn=dfop[['Id',
            'External id',
@@ -84,13 +86,12 @@ class MtncmPayoutProcessor:
            'From / Fee',
            'Currency.14',
            'From name',
-           'To message',
            'From handler name',
            'DateCourte'
             ]]
 
         dfmtn['Amount'].replace(['-'], [''])
-        transfer= dfmtn.loc[(dfmtn['Type'] == 'Transfer') & (dfmtn['From name'] == 'PAYMETRUST Deposit')]
+        #transfer= dfmtn.loc[(dfmtn['Type'] == 'Transfer') & (dfmtn['From name'] == 'PAYMETRUST')]
         
         #MISE EN PLACE DE RECHERCHE X POUR RECUPERATION CHEZ LE PARTENAIRE
         # Supprimer les doublons en conservant la première occurrence
@@ -101,13 +102,14 @@ class MtncmPayoutProcessor:
         correspondance_statut_op= dfmtn.set_index('External id')['Status']
         correspondance_date_op = dfmtn.set_index('External id')['DateCourte']
         correspondance_idoperator = dfmtn.set_index('External id')['Id']
+        correspondance_march = dfpmt.set_index('Transaction ID')['Merchant Name']
         
-        
+        dfmtn['Merchant Name'] = dfmtn['External id'].map(correspondance_march)
         dfpmt['DATEOP'] = dfpmt['Transaction ID'].map(correspondance_date_op)
         dfpmt['STATUTOP'] = dfpmt['Transaction ID'].map(correspondance_statut_op)
         dfpmt['IDOPERATOR'] = dfpmt['Transaction ID'].map(correspondance_idoperator)
                 
-        
+        transfer= dfmtn.loc[(dfmtn['Type'] == 'Transfer') & (dfmtn['From name'] == 'PAYMETRUST')]
         # Définir les taux de commission pour chaque opérateur
         dfpmt['Fraisop'] = dfpmt['Montant'] * 0.001
         dfpmt['FraisPmt'] = dfpmt['Fee amount'] - dfpmt['Fraisop']
@@ -142,10 +144,10 @@ class MtncmPayoutProcessor:
 
             # Affichage dans des metric cards améliorées
             col1, col2, col3, col4 = st.columns(4)
-            col1.markdown(metric_card("Transactions", nombre_transaction, "#1E90FF", "🔄"), unsafe_allow_html=True)
-            col2.markdown(metric_card("Transactions Succès", select, "#1E90FF", "🔄"), unsafe_allow_html=True)
-            col3.markdown(metric_card("Montant Total", f"{montant_total:,.2f}", "#2E8B57", "💰"), unsafe_allow_html=True)
-            col4.markdown(metric_card("Taux de Succès", f"{taux_succes:.1f}%", "#FFA500", "✅"), unsafe_allow_html=True)
+            col1.markdown(metric_card("Transactions", nombre_transaction, "#3070F0", "🔄"), unsafe_allow_html=True)
+            col2.markdown(metric_card("Transactions Succès", select, "#3070F0", "🔄"), unsafe_allow_html=True)
+            col3.markdown(metric_card("Montant Total", f"{montant_total:,.2f}", "#3070F0", "💰"), unsafe_allow_html=True)
+            col4.markdown(metric_card("Taux de Succès", f"{taux_succes:.1f}%", "#3070F0", "✅"), unsafe_allow_html=True)
             
             # Nouveau: Graphique combiné montant/nombre de transactions
             st.subheader("Évolution Journalière")
@@ -187,11 +189,11 @@ class MtncmPayoutProcessor:
             maj=df_filteredpmt[(df_filteredpmt['Statut']=='PENDING')]
             nbre_maj=maj['Transaction ID'].count()
             
-            col1, col2, col3,col4 = st.columns(4)
-            col2.metric("Transactions Matchées", matched, delta=f"{reconciliation_rate:.1f}%")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Transactions Matchées", matched, delta=f"{reconciliation_rate:.1f}%")
+            col2.metric("Total Transactions", len(dfpmt))
             col3.metric("Nombre transaction MAJ", nbre_maj)
             col4.metric("Transactions Non Matchées", unmatched)
-            col1.metric("Total Transactions", len(dfpmt))
             # Création du tableau croisé dynamique
             df_filteredpmt = dfpmt[dfpmt['MTNCM'] == 1]
         # Création du tableau croisé dynamique
@@ -211,7 +213,7 @@ class MtncmPayoutProcessor:
             tcdmtncm = pd.pivot_table(
             df_filtered,
             values=['Nombre', 'Amount'],
-            index=['DateCourte','Status'],
+            index=['Merchant Name','DateCourte','Status'],
             aggfunc={'Nombre': 'count','Amount': 'sum'},
             fill_value=0,
             margins=True,
@@ -236,6 +238,12 @@ class MtncmPayoutProcessor:
             maj_failed_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'FAILED') & (dfpmt['MTNCM'] == 1)]
             maj_pending_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'PENDING') & (dfpmt['MTNCM'] == 1)]
             trx_succes_abs = dfpmt.loc[(dfpmt['Statut'] == 'SUCCESS') & (dfpmt['MTNCM'] == 0)]
+            trx_succes_abs, _n_before_date = filter_succes_abs_by_reco_date(
+                trx_succes_abs,
+                reco_start=getattr(self, 'reco_start', None),
+                reco_end=getattr(self, 'reco_end', None),
+                date_col='Date',
+            )
             trx_en_attente_abs= dfpmt.loc[(dfpmt['Statut']=='PENDING') & (dfpmt['MTNCM'] == 0)]
             trx_succes_cinetpay_abs_pmt = transfer.loc[(transfer['Status']=='Successful') & (transfer['PMT'] == 0)]
             select_marchand=df_filteredpmt.groupby(['Pays','Merchant Name','Operator']).agg(
@@ -268,8 +276,15 @@ class MtncmPayoutProcessor:
             safe_show(trx_succes_cinetpay_abs_pmt)
             
             st.subheader("🟠 Transactions SUCCES PMT absentes Partenaire")
+            if getattr(self, 'reco_start', None) is not None or getattr(self, 'reco_end', None) is not None:
+                _ds = self.reco_start.strftime('%d/%m/%Y') if getattr(self, 'reco_start', None) and hasattr(self.reco_start, 'strftime') else (self.reco_start or '…')
+                _de = self.reco_end.strftime('%d/%m/%Y') if getattr(self, 'reco_end', None) and hasattr(self.reco_end, 'strftime') else (self.reco_end or '…')
+                st.caption(
+                    f"Filtrées sur la période de réconciliation : {_ds} → {_de}"
+                    f" — {len(trx_succes_abs):,} ligne(s)"
+                )
             safe_show(trx_succes_abs)
-            
+
             st.subheader("🟤 TRANSACTION PAR OPERATEUR ET MARCHAND")
             safe_show(select_marchand)
 
@@ -286,22 +301,30 @@ class MtncmPayoutProcessor:
         # Onglet 3 Rapport
         #---------------------------------------
         with tabs[2]:
-            st.subheader('Vue globale par Statut')
-            chart1, chart2= st.columns((2))
+            c_title1, c_title2 = st.columns(2)
+            with c_title1:
+                st.subheader("Vue globale par Statut")
+            with c_title2:
+                st.subheader("Vue globale par Pays")
+            chart1, chart2 = st.columns(2)
             with chart1:
-                fig=px.pie(dfpmt, values="Montant",names="Statut", template="plotly_dark")
-                fig.update_traces(text=dfpmt["Statut"], textposition="inside")
-                st.plotly_chart(fig,use_container_width=True)
-                
+                fig = px.pie(dfpmt, values="Montant", names="Statut", template="plotly_white",
+                             color_discrete_sequence=["#3070F0", "#5B9DFF", "#94B8F5", "#1A4FC4"])
+                fig.update_layout(height=320, margin=dict(l=10, r=10, t=20, b=10),
+                                  paper_bgcolor="white", font=dict(color="#000000", size=12),
+                                  showlegend=True, legend=dict(orientation="v", yanchor="middle", y=0.5))
+                fig.update_traces(textposition="inside", textfont_color="#000000")
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
             with chart2:
-                st.subheader('Vue globale par Pays')
                 monthly_statut = dfpmt.groupby("Pays")["Montant"].sum().reset_index()
-                fig_month = px.bar(monthly_statut, x="Pays", y="Montant",
-                text_auto=True,
-                color="Montant",
-                color_continuous_scale=["#1E90FF", "#4682B4"],
-                template="plotly_white")
-                fig_month.update_layout(height=330, margin=dict(l=20, r=20, t=40, b=20))
+                fig_month = px.bar(monthly_statut, x="Pays", y="Montant", text_auto=True,
+                                   color="Montant",
+                                   color_continuous_scale=["#5B9DFF", "#3070F0"],
+                                   template="plotly_white")
+                fig_month.update_layout(height=320, margin=dict(l=10, r=10, t=20, b=10),
+                                        paper_bgcolor="white", plot_bgcolor="white",
+                                        font=dict(color="#000000", size=12),
+                                        coloraxis_showscale=False)
                 st.plotly_chart(fig_month, use_container_width=True, config={"displayModeBar": False})
 
 
@@ -357,6 +380,8 @@ class MtncmPayoutProcessor:
                 "Total transactions PMT": _total,
                 "Transactions matchées": _matched,
                 "Taux de réconciliation (%)": _rate,
+                "Date début": str(getattr(self, "reco_start", "") or ""),
+                "Date fin": str(getattr(self, "reco_end", "") or ""),
                 "Montant total": f"{_montant:,.2f}",
             }
 
@@ -392,8 +417,11 @@ class MtncmPayoutProcessor:
                 metrics=_metrics,
                 sheets=_sheets,
                 key_suffix=getattr(self, "_partner_label", "default").replace(" ", "_"),
+                reco_start=getattr(self, "reco_start", None),
+                reco_end=getattr(self, "reco_end", None),
             )
         except Exception as _e:
             st.warning(f"Rapport Excel non généré : {_e}")
+
 
         #Processed Cinetpay payin fin-

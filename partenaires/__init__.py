@@ -1,6 +1,7 @@
 from .cinetpay_payin import CinetpayPayinProcessor
 from .cinetpay_payout import CinetpayPayoutProcessor
 from .ombf_payin import OmbfPayinProcessor
+from .ombf_payout import OmbfPayoutProcessor
 from .bizao_payin import BizaoPayinProcessor
 from .mtnci_payin import MtnciPayinProcessor
 from .mtnci_payout import MtnciPayoutProcessor
@@ -19,47 +20,60 @@ from .wavesn_payin import WavesnPayinProcessor
 from .wavesn_payout import WavesnPayoutProcessor
 
 
-def get_processor(file_name, data_file, partner_file):
+def get_processor(file_name, data_file, partner_file, reco_start=None, reco_end=None, reco_date=None):
+    """
+    reco_start / reco_end : plage de réconciliation (V1.1.2).
+    reco_date : conservé pour compatibilité V1.1.1 (utilisé comme début=fin si fourni seul).
+    """
     file_name = file_name.lower()
-    
+
+    # Compatibilité V1.1.1 : une seule date → plage d'un jour
+    if reco_date is not None and reco_start is None and reco_end is None:
+        reco_start = reco_date
+        reco_end = reco_date
+
+    def _make(cls):
+        return cls(data_file, partner_file, reco_start=reco_start, reco_end=reco_end)
+
     if 'cinetpay' in file_name and 'payin' in file_name:
-        return CinetpayPayinProcessor(data_file, partner_file)
+        return _make(CinetpayPayinProcessor)
     if 'cinetpay' in file_name and 'payout' in file_name:
-        return CinetpayPayoutProcessor(data_file, partner_file)
+        return _make(CinetpayPayoutProcessor)
     if 'ombf' in file_name and 'payin' in file_name:
-        return OmbfPayinProcessor(data_file, partner_file)
+        return _make(OmbfPayinProcessor)
+    if 'ombf' in file_name and 'payout' in file_name:
+        return _make(OmbfPayoutProcessor)
     if 'bizao' in file_name and 'payin' in file_name:
-        return BizaoPayinProcessor(data_file, partner_file)
+        return _make(BizaoPayinProcessor)
     if 'mtnci' in file_name and 'payin' in file_name:
-        return MtnciPayinProcessor(data_file, partner_file)
+        return _make(MtnciPayinProcessor)
     if 'mtnci' in file_name and 'payout' in file_name:
-        return MtnciPayoutProcessor(data_file, partner_file)
+        return _make(MtnciPayoutProcessor)
     if 'waveci' in file_name and 'payin' in file_name:
-        return WaveciPayinProcessor(data_file, partner_file)
+        return _make(WaveciPayinProcessor)
     if 'waveci' in file_name and 'payout' in file_name:
-        return WaveciPayoutProcessor(data_file, partner_file)
+        return _make(WaveciPayoutProcessor)
     if 'ifutur' in file_name and 'payin' in file_name:
-        return ifuturPayinProcessor(data_file, partner_file)
+        return _make(ifuturPayinProcessor)
     if 'mtncm' in file_name and 'payin' in file_name:
-        return MtncmPayinProcessor(data_file, partner_file)
+        return _make(MtncmPayinProcessor)
     if 'mtncm' in file_name and 'payout' in file_name:
-        return MtncmPayoutProcessor(data_file, partner_file)
+        return _make(MtncmPayoutProcessor)
     if 'ifutur' in file_name and 'payout' in file_name:
-        return IfuturPayoutProcessor(data_file, partner_file)
-    if 'omci' in file_name and 'payout' in file_name:
-        return OmciPayoutProcessor(data_file, partner_file)
-    if 'omci' in file_name and 'payin' in file_name:
-        return OmciPayinProcessor(data_file, partner_file)
+        return _make(IfuturPayoutProcessor)
+    if 'orangeci' in file_name and 'payout' in file_name:
+        return _make(OmciPayoutProcessor)
+    if 'orangeci' in file_name and 'payin' in file_name:
+        return _make(OmciPayinProcessor)
     if 'moovci' in file_name and 'payin' in file_name:
-        return MoovciPayinProcessor(data_file, partner_file)
+        return _make(MoovciPayinProcessor)
     if 'wavebf' in file_name and 'payin' in file_name:
-        return WavebfPayinProcessor(data_file, partner_file)
+        return _make(WavebfPayinProcessor)
     if 'wavebf' in file_name and 'payout' in file_name:
-        return WavebfPayoutProcessor(data_file, partner_file)
+        return _make(WavebfPayoutProcessor)
     if 'wavesn' in file_name and 'payin' in file_name:
-        return WavesnPayinProcessor(data_file, partner_file)
+        return _make(WavesnPayinProcessor)
     if 'wavesn' in file_name and 'payout' in file_name:
-        return WavesnPayoutProcessor(data_file, partner_file)
-    
-    else:
-        raise ValueError("Type de partenaire non reconnu")
+        return _make(WavesnPayoutProcessor)
+
+    raise ValueError("Type de partenaire non reconnu")

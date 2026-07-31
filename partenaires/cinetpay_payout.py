@@ -11,13 +11,15 @@ import io
 import os
 from streamlit_extras.stylable_container import stylable_container
 import plotly.figure_factory as ff
-from utils.helpers import metric_card, safe_show
+from utils.helpers import metric_card, safe_show, filter_succes_abs_by_reco_date
 from datetime import datetime
 
 class CinetpayPayoutProcessor:
-    def __init__(self, data_file, partner_file):
+    def __init__(self, data_file, partner_file, reco_start=None, reco_end=None):
         self.data_file = data_file
         self.partner_file = partner_file
+        self.reco_start = reco_start
+        self.reco_end = reco_end
         self._partner_label = "CINETPAY PAYOUT"
     
     def load_file(self, file):
@@ -144,10 +146,10 @@ class CinetpayPayoutProcessor:
 
             # Affichage dans des metric cards améliorées
             col1, col2, col3, col4 = st.columns(4)
-            col1.markdown(metric_card("Transactions", nombre_transaction, "#1E90FF", "🔄"), unsafe_allow_html=True)
-            col2.markdown(metric_card("Transactions Succès", select, "#1E90FF", "🔄"), unsafe_allow_html=True)
-            col3.markdown(metric_card("Montant Total", f"{montant_total:,.2f}", "#2E8B57", "💰"), unsafe_allow_html=True)
-            col4.markdown(metric_card("Taux de Succès", f"{taux_succes:.1f}%", "#FFA500", "✅"), unsafe_allow_html=True)
+            col1.markdown(metric_card("Transactions", nombre_transaction, "#3070F0", "🔄"), unsafe_allow_html=True)
+            col2.markdown(metric_card("Transactions Succès", select, "#3070F0", "🔄"), unsafe_allow_html=True)
+            col3.markdown(metric_card("Montant Total", f"{montant_total:,.2f}", "#3070F0", "💰"), unsafe_allow_html=True)
+            col4.markdown(metric_card("Taux de Succès", f"{taux_succes:.1f}%", "#3070F0", "✅"), unsafe_allow_html=True)
             
             # Nouveau: Graphique combiné montant/nombre de transactions
             st.subheader("Évolution Journalière")
@@ -187,11 +189,11 @@ class CinetpayPayoutProcessor:
             unmatched = len(dfpmt) - matched
             reconciliation_rate = (matched / len(dfpmt)) * 100
             
-            col1, col2, col3,col4 = st.columns(4)
-            col2.metric("Transactions Matchées", matched, delta=f"{reconciliation_rate:.1f}%")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Transactions Matchées", matched, delta=f"{reconciliation_rate:.1f}%")
+            col2.metric("Total Transactions", len(dfpmt))
             col3.metric("Nombre transaction MAJ", nbre_maj)
             col4.metric("Transactions Non Matchées", unmatched)
-            col1.metric("Total Transactions", len(dfpmt))
 
             
 
@@ -238,6 +240,12 @@ class CinetpayPayoutProcessor:
             maj_pending_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'PENDING') & (dfpmt['CINETPAY'] == 1)]
             majp=maj_pending_a_succes[['Transaction ID','Phone Number','Statut','STATUTOP','IDOPERATOR']]
             trx_succes_abs = dfpmt.loc[(dfpmt['Statut'] == 'SUCCESS') & (dfpmt['CINETPAY'] == 0)]
+            trx_succes_abs, _n_before_date = filter_succes_abs_by_reco_date(
+                trx_succes_abs,
+                reco_start=getattr(self, 'reco_start', None),
+                reco_end=getattr(self, 'reco_end', None),
+                date_col='Date',
+            )
             trx_en_attente_abs= dfpmt.loc[(dfpmt['Statut']=='PENDING') & (dfpmt['CINETPAY'] == 0)]
             trx_succes_cinetpay_abs_pmt = val.loc[(val['Statut']=='ACCEPTED') & (val['PMT'] == 0)]
             
@@ -267,8 +275,15 @@ class CinetpayPayoutProcessor:
                 st.dataframe(trx_en_attente_abs)
                 
             with st.expander("🟢 Transactions SUCCES absentes chez partenaire"):
+                if getattr(self, 'reco_start', None) is not None or getattr(self, 'reco_end', None) is not None:
+                    _ds = self.reco_start.strftime('%d/%m/%Y') if getattr(self, 'reco_start', None) and hasattr(self.reco_start, 'strftime') else (self.reco_start or '…')
+                    _de = self.reco_end.strftime('%d/%m/%Y') if getattr(self, 'reco_end', None) and hasattr(self.reco_end, 'strftime') else (self.reco_end or '…')
+                    st.caption(
+                        f"Filtrées sur la période de réconciliation : {_ds} → {_de}"
+                        f" — {len(trx_succes_abs):,} ligne(s)"
+                    )
                 st.dataframe(trx_succes_abs)
-                
+
             with st.expander("🟠 Transactions SUCCES partenaire absentes PMT"):
                 st.dataframe(trx_succes_cinetpay_abs_pmt)
             
@@ -312,8 +327,9 @@ class CinetpayPayoutProcessor:
             col1, col2 = st.columns(2)
             with col1:
                 fig=px.pie(dfpmt, values="Montant", names="Statut", 
-                           template="plotly_dark", hole=0.4,
+                           template="plotly_white", hole=0.4,
                            title="Répartition par Statut")
+                fig.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="white", font=dict(color="#000000", size=12))
                 fig.update_traces(textinfo='percent+label', pull=[0.1, 0, 0])
                 st.plotly_chart(fig,use_container_width=True)
                 
@@ -393,6 +409,8 @@ class CinetpayPayoutProcessor:
                 "Total transactions PMT": _total,
                 "Transactions matchées": _matched,
                 "Taux de réconciliation (%)": _rate,
+                "Date début": str(getattr(self, "reco_start", "") or ""),
+                "Date fin": str(getattr(self, "reco_end", "") or ""),
                 "Montant total": f"{_montant:,.2f}",
             }
 
@@ -428,7 +446,10 @@ class CinetpayPayoutProcessor:
                 metrics=_metrics,
                 sheets=_sheets,
                 key_suffix=getattr(self, "_partner_label", "default").replace(" ", "_"),
+                reco_start=getattr(self, "reco_start", None),
+                reco_end=getattr(self, "reco_end", None),
             )
         except Exception as _e:
             st.warning(f"Rapport Excel non généré : {_e}")
+
 
